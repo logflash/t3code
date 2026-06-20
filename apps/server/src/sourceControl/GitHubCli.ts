@@ -33,6 +33,8 @@ export interface GitHubPullRequestSummary {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly author?: string | null;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -57,8 +59,21 @@ export interface GitHubCliShape {
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
+  readonly listPullRequests: (input: {
+    readonly cwd: string;
+    readonly repo?: string;
+    readonly state: "open" | "closed" | "merged" | "all";
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
   readonly getPullRequest: (input: {
     readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+
+  readonly getPullRequestSummary: (input: {
+    readonly cwd: string;
+    readonly repo?: string;
     readonly reference: string;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
 
@@ -281,6 +296,44 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
               ),
         ),
       ),
+    listPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          ...(input.repo ? ["--repo", input.repo] : []),
+          "--state",
+          input.state,
+          "--limit",
+          String(input.limit ?? 50),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : Effect.sync(() => GitHubPullRequests.decodeGitHubPullRequestListJson(raw)).pipe(
+                Effect.flatMap((decoded) => {
+                  if (!Result.isSuccess(decoded)) {
+                    return Effect.fail(
+                      new GitHubCliError({
+                        operation: "listPullRequests",
+                        detail: `GitHub CLI returned invalid PR list JSON: ${GitHubPullRequests.formatGitHubJsonDecodeError(decoded.failure)}`,
+                        cause: decoded.failure,
+                      }),
+                    );
+                  }
+
+                  return Effect.succeed(
+                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
+                  );
+                }),
+              ),
+        ),
+      ),
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,
@@ -300,6 +353,39 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
                 return Effect.fail(
                   new GitHubCliError({
                     operation: "getPullRequest",
+                    detail: `GitHub CLI returned invalid pull request JSON: ${GitHubPullRequests.formatGitHubJsonDecodeError(decoded.failure)}`,
+                    cause: decoded.failure,
+                  }),
+                );
+              }
+
+              return Effect.succeed(
+                (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
+              );
+            }),
+          ),
+        ),
+      ),
+    getPullRequestSummary: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          input.reference,
+          ...(input.repo ? ["--repo", input.repo] : []),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          Effect.sync(() => GitHubPullRequests.decodeGitHubPullRequestJson(raw)).pipe(
+            Effect.flatMap((decoded) => {
+              if (!Result.isSuccess(decoded)) {
+                return Effect.fail(
+                  new GitHubCliError({
+                    operation: "getPullRequestSummary",
                     detail: `GitHub CLI returned invalid pull request JSON: ${GitHubPullRequests.formatGitHubJsonDecodeError(decoded.failure)}`,
                     cause: decoded.failure,
                   }),

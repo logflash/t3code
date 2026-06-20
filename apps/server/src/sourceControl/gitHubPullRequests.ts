@@ -14,6 +14,8 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly author?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -27,7 +29,15 @@ const GitHubPullRequestSchema = Schema.Struct({
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
+  isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  author: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
@@ -77,6 +87,7 @@ function normalizeGitHubPullRequestRecord(
     (typeof headRepositoryNameWithOwner === "string" && headRepositoryNameWithOwner.includes("/")
       ? (headRepositoryNameWithOwner.split("/")[0] ?? null)
       : null);
+  const authorLogin = trimOptionalString(raw.author?.login);
 
   return {
     number: raw.number,
@@ -86,6 +97,10 @@ function normalizeGitHubPullRequestRecord(
     headRefName: raw.headRefName,
     state: normalizeGitHubPullRequestState(raw),
     updatedAt: raw.updatedAt ?? Option.none(),
+    // Only surface draft/author when the gh query actually requested them, so
+    // callers that don't (pr view / open-PR lookup) keep their existing shape.
+    ...(typeof raw.isDraft === "boolean" ? { isDraft: raw.isDraft } : {}),
+    ...(authorLogin !== null ? { author: authorLogin } : {}),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),

@@ -34,11 +34,15 @@ import {
   VcsPullResult,
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
+  GitListPullRequestsInput,
+  GitListPullRequestsResult,
+  VcsListRemotesInput,
   GitRunStackedActionInput,
   VcsStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
+import { VcsListRemotesResult } from "./vcs.ts";
 import {
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
@@ -168,11 +172,13 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsListRemotes: "vcs.listRemotes",
 
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  gitListPullRequests: "git.listPullRequests",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -422,6 +428,18 @@ export const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction,
 export const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
   payload: GitPullRequestRefInput,
   success: GitResolvePullRequestResult,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitListPullRequestsRpc = Rpc.make(WS_METHODS.gitListPullRequests, {
+  payload: GitListPullRequestsInput,
+  success: GitListPullRequestsResult,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsListRemotesRpc = Rpc.make(WS_METHODS.vcsListRemotes, {
+  payload: VcsListRemotesInput,
+  success: VcsListRemotesResult,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
@@ -708,6 +726,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
+  WsGitListPullRequestsRpc,
+  WsVcsListRemotesRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,

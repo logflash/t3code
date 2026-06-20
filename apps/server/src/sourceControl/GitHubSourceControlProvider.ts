@@ -7,6 +7,7 @@ import {
   SourceControlProviderError,
   type ChangeRequest,
   type ChangeRequestState,
+  type GitPullRequestSummary,
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
@@ -47,6 +48,19 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+  };
+}
+
+function toPullRequestSummary(summary: GitHubCli.GitHubPullRequestSummary): GitPullRequestSummary {
+  return {
+    number: summary.number,
+    title: summary.title,
+    url: summary.url,
+    state: summary.state ?? "open",
+    isDraft: summary.isDraft ?? false,
+    baseBranch: summary.baseRefName,
+    headBranch: summary.headRefName,
+    author: summary.author ?? null,
   };
 }
 
@@ -178,6 +192,29 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
     listChangeRequests,
+    listPullRequests: (input) =>
+      github
+        .listPullRequests({
+          cwd: input.cwd,
+          ...(input.repo ? { repo: input.repo } : {}),
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(
+          Effect.map((summaries) => summaries.map(toPullRequestSummary)),
+          Effect.mapError((error) => providerError("listPullRequests", error)),
+        ),
+    getPullRequestSummary: (input) =>
+      github
+        .getPullRequestSummary({
+          cwd: input.cwd,
+          ...(input.repo ? { repo: input.repo } : {}),
+          reference: input.reference,
+        })
+        .pipe(
+          Effect.map(toPullRequestSummary),
+          Effect.mapError((error) => providerError("getPullRequestSummary", error)),
+        ),
     getChangeRequest: (input) =>
       github.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),

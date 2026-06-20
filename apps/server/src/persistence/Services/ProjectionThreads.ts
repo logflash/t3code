@@ -40,6 +40,11 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
+  // Server-owned per-thread UI state. `bookmarked` is 0/1; the PR-review identity
+  // is split across two nullable columns (both set together or both null).
+  bookmarked: NonNegativeInt,
+  pullRequestNumber: Schema.NullOr(Schema.Int),
+  pullRequestRemote: Schema.NullOr(Schema.String),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

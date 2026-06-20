@@ -17,6 +17,7 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
+import { syncDocumentZoomFactorProperty } from "./lib/appZoom";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
@@ -26,6 +27,9 @@ const router = getRouter(history);
 
 if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
+  // Keep titlebar chrome aligned with the fixed native traffic lights as the
+  // page is zoomed (Cmd +/-).
+  syncDocumentZoomFactorProperty();
 }
 
 document.title = APP_DISPLAY_NAME;

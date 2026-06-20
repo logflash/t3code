@@ -23,6 +23,18 @@ import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+// "Review PR #123" / "Review PR #123 (2)" — the naming scheme used when creating
+// PR-review threads. Used to derive the durable PR identity at creation when the
+// client did not provide one explicitly.
+const PULL_REQUEST_REVIEW_TITLE_PATTERN = /^Review PR #(\d+)(?: \(\d+\))?$/;
+
+function derivePullRequestReviewFromTitle(
+  title: string,
+): { readonly prNumber: number; readonly remote: string } | null {
+  const match = PULL_REQUEST_REVIEW_TITLE_PATTERN.exec(title);
+  return match ? { prNumber: Number(match[1]), remote: "origin" } : null;
+}
+
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
@@ -222,6 +234,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // Record the PR-review identity durably at creation. The client passes it
+      // explicitly (honoring the picked remote); when absent we derive it from
+      // the "Review PR #N" naming scheme (defaulting the remote to "origin") so
+      // categorization survives later renames without relying on the title.
+      const pullRequestReview =
+        command.pullRequestReview !== undefined
+          ? command.pullRequestReview
+          : derivePullRequestReviewFromTitle(command.title);
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -239,6 +259,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          pullRequestReview,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -335,6 +356,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.bookmarked !== undefined ? { bookmarked: command.bookmarked } : {}),
           updatedAt: occurredAt,
         },
       };

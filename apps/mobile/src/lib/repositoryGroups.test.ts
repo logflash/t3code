@@ -37,6 +37,8 @@ function makeThread(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    bookmarked: false,
+    pullRequestReview: null,
     ...input,
   };
 }

@@ -337,6 +337,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          bookmarked,
+          pull_request_number AS "pullRequestNumber",
+          pull_request_remote AS "pullRequestRemote",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -365,6 +368,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          bookmarked,
+          pull_request_number AS "pullRequestNumber",
+          pull_request_remote AS "pullRequestRemote",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -395,6 +401,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          bookmarked,
+          pull_request_number AS "pullRequestNumber",
+          pull_request_remote AS "pullRequestRemote",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -757,6 +766,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          bookmarked,
+          pull_request_number AS "pullRequestNumber",
+          pull_request_remote AS "pullRequestRemote",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -1517,6 +1529,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       hasPendingApprovals: row.pendingApprovalCount > 0,
                       hasPendingUserInput: row.pendingUserInputCount > 0,
                       hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                      bookmarked: row.bookmarked > 0,
+                      pullRequestReview:
+                        row.pullRequestNumber !== null && row.pullRequestRemote !== null
+                          ? { prNumber: row.pullRequestNumber, remote: row.pullRequestRemote }
+                          : null,
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1651,6 +1668,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  bookmarked: row.bookmarked > 0,
+                  pullRequestReview:
+                    row.pullRequestNumber !== null && row.pullRequestRemote !== null
+                      ? { prNumber: row.pullRequestNumber, remote: row.pullRequestRemote }
+                      : null,
                 }),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
@@ -1891,6 +1913,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+        bookmarked: threadRow.value.bookmarked > 0,
+        pullRequestReview:
+          threadRow.value.pullRequestNumber !== null && threadRow.value.pullRequestRemote !== null
+            ? {
+                prNumber: threadRow.value.pullRequestNumber,
+                remote: threadRow.value.pullRequestRemote,
+              }
+            : null,
       } satisfies OrchestrationThreadShell);
     });
 

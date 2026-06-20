@@ -3822,7 +3822,9 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = trimmed;
+    // A pre-seeded draft title (e.g. "Review PR #123") wins over the first
+    // message so PR-review threads are named deterministically.
+    let titleSeed = draftThread?.titleSeed ?? trimmed;
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -3835,6 +3837,11 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
+    // A draft with an explicit titleSeed (e.g. PR reviews -> "Review PR #123")
+    // has a locked title: omit titleSeed from the turn so the server's title
+    // summarizer leaves it alone (canReplaceThreadTitle only replaces when a
+    // seed is provided or the title is the default).
+    const hasLockedTitle = (draftThread?.titleSeed?.trim().length ?? 0) > 0;
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
@@ -3917,7 +3924,7 @@ function ChatViewContent(props: ChatViewProps) {
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
+          ...(hasLockedTitle ? {} : { titleSeed: title }),
           runtimeMode,
           interactionMode,
           ...(bootstrap ? { bootstrap } : {}),

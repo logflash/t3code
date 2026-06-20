@@ -387,6 +387,14 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+// Durable identity recorded for a PR-review thread at creation time, so the
+// sidebar can categorize it (Dev vs Pull Requests) and poll its live PR status.
+export const ThreadPullRequestReview = Schema.Struct({
+  prNumber: Schema.Int,
+  remote: TrimmedNonEmptyString,
+});
+export type ThreadPullRequestReview = typeof ThreadPullRequestReview.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -407,6 +415,11 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  // Server-owned per-thread UI state (default Dev / unbookmarked).
+  bookmarked: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  pullRequestReview: Schema.NullOr(ThreadPullRequestReview).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -503,6 +516,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pullRequestReview: Schema.optional(Schema.NullOr(ThreadPullRequestReview)),
   createdAt: IsoDateTime,
 });
 
@@ -532,6 +546,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  bookmarked: Schema.optional(Schema.Boolean),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -558,6 +573,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pullRequestReview: Schema.optional(Schema.NullOr(ThreadPullRequestReview)),
   createdAt: IsoDateTime,
 });
 
@@ -846,6 +862,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pullRequestReview: Schema.optional(Schema.NullOr(ThreadPullRequestReview)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -872,6 +889,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  bookmarked: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 

@@ -214,6 +214,7 @@ const PersistedDraftThreadState = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
+  titleSeed: Schema.optionalKey(Schema.NullOr(Schema.String)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -292,6 +293,9 @@ export interface DraftSessionState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  /** Optional pre-seeded thread title (e.g. "Review PR #123"). Wins over the
+   * first message when promoting the draft to a server thread. */
+  titleSeed?: string | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -355,6 +359,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      titleSeed?: string | null;
     },
   ) => void;
   /** Creates or updates the draft session tracked for a concrete project ref. */
@@ -369,6 +374,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      titleSeed?: string | null;
     },
   ) => void;
   /** Updates mutable draft-session metadata without touching composer content. */
@@ -382,6 +388,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      titleSeed?: string | null;
     },
   ) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
@@ -1315,6 +1322,7 @@ function createDraftThreadState(
     envMode?: DraftThreadEnvMode;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
+    titleSeed?: string | null;
   },
 ): DraftThreadState {
   const projectChanged =
@@ -1351,6 +1359,7 @@ function createDraftThreadState(
         : projectChanged
           ? "local"
           : (existingThread?.envMode ?? "local")),
+    titleSeed: options?.titleSeed ?? existingThread?.titleSeed ?? null,
     promotedTo: null,
   };
 }
@@ -1382,6 +1391,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
+    (left.titleSeed ?? null) === (right.titleSeed ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -2343,6 +2353,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : projectChanged
                     ? "local"
                     : (existing.envMode ?? "local")),
+              titleSeed:
+                options.titleSeed === undefined
+                  ? (existing.titleSeed ?? null)
+                  : (options.titleSeed ?? null),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2355,6 +2369,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.branch === existing.branch &&
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
+              (nextDraftThread.titleSeed ?? null) === (existing.titleSeed ?? null) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

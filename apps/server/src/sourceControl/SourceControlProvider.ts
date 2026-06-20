@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
   ChangeRequestState,
+  GitPullRequestSummary,
   SourceControlProviderError,
   SourceControlProviderInfo,
   SourceControlProviderKind,
@@ -59,6 +60,24 @@ export interface SourceControlProviderShape {
     readonly state: ChangeRequestState | "all";
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
+  /**
+   * Repo-wide pull request listing (no head-branch filter). Optional because it
+   * is currently only implemented by the GitHub provider; callers must handle
+   * its absence. Returns the wire summary shape directly.
+   */
+  readonly listPullRequests?: (input: {
+    readonly cwd: string;
+    readonly repo?: string;
+    readonly state: ChangeRequestState | "all";
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<GitPullRequestSummary>, SourceControlProviderError>;
+  /** Fetch a single pull request as a wire summary, scoped to `repo`. Optional
+   * (GitHub-only) for the same reason as `listPullRequests`. */
+  readonly getPullRequestSummary?: (input: {
+    readonly cwd: string;
+    readonly repo?: string;
+    readonly reference: string;
+  }) => Effect.Effect<GitPullRequestSummary, SourceControlProviderError>;
   readonly getChangeRequest: (input: {
     readonly cwd: string;
     readonly context?: SourceControlProviderContext;

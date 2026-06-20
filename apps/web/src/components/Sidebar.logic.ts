@@ -318,14 +318,25 @@ export function isContextMenuPointerDown(input: {
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
+  isBookmarked?: boolean;
 }): string {
   const baseClassName =
     "h-6 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring sm:h-7";
+
+  // Bookmarked rows (Alt+click) get a light-yellow wash painted as a ::before
+  // layer that sits *above* the row's own background — including the selection or
+  // active highlight — but below the row content (-z-10), so a bookmarked chat
+  // stays marked even while it is open. The button is overflow-hidden + rounded,
+  // so inset-0 is clipped to the row shape.
+  const bookmarkClassName = input.isBookmarked
+    ? "before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-yellow-400/20 before:content-[''] dark:before:bg-yellow-300/20"
+    : "";
 
   if (input.isSelected && input.isActive) {
     return cn(
       baseClassName,
       "bg-primary/22 text-foreground font-medium hover:bg-primary/26 hover:text-foreground dark:bg-primary/30 dark:hover:bg-primary/36",
+      bookmarkClassName,
     );
   }
 
@@ -333,6 +344,7 @@ export function resolveThreadRowClassName(input: {
     return cn(
       baseClassName,
       "bg-primary/15 text-foreground hover:bg-primary/19 hover:text-foreground dark:bg-primary/22 dark:hover:bg-primary/28",
+      bookmarkClassName,
     );
   }
 
@@ -340,10 +352,17 @@ export function resolveThreadRowClassName(input: {
     return cn(
       baseClassName,
       "bg-accent/85 text-foreground font-medium hover:bg-accent hover:text-foreground dark:bg-accent/55 dark:hover:bg-accent/70",
+      bookmarkClassName,
     );
   }
 
-  return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+  return cn(
+    baseClassName,
+    input.isBookmarked
+      ? "text-foreground hover:bg-accent hover:text-foreground"
+      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+    bookmarkClassName,
+  );
 }
 
 export function resolveThreadStatusPill(input: {

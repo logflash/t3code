@@ -20,6 +20,10 @@ import {
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
+  GitListPullRequestsInput,
+  GitListPullRequestsResult,
+  VcsListRemotesInput,
+  VcsListRemotesResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
@@ -81,6 +85,12 @@ export interface GitManagerShape {
   readonly resolvePullRequest: (
     input: GitPullRequestRefInput,
   ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+  readonly listRemotes: (
+    input: VcsListRemotesInput,
+  ) => Effect.Effect<VcsListRemotesResult, GitManagerServiceError>;
+  readonly listPullRequests: (
+    input: GitListPullRequestsInput,
+  ) => Effect.Effect<GitListPullRequestsResult, GitManagerServiceError>;
   readonly preparePullRequestThread: (
     input: GitPreparePullRequestThreadInput,
   ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -1407,6 +1417,97 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     },
   );
 
+  const listRemotes: GitManagerShape["listRemotes"] = Effect.fn("listRemotes")(function* (input) {
+    const result = yield* gitCore.execute({
+      operation: "GitManager.listRemotes",
+      cwd: input.cwd,
+      args: ["remote", "-v"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+      maxOutputBytes: 64 * 1024,
+    });
+    const observedAt = yield* DateTime.now;
+    const freshness = {
+      source: "live-local" as const,
+      observedAt,
+      expiresAt: Option.none(),
+    };
+    if (result.exitCode !== 0) {
+      // Not a repository / no remotes configured: report an empty list.
+      return { remotes: [], freshness };
+    }
+    const byName = new Map<string, { fetchUrl: string | null; pushUrl: string | null }>();
+    for (const line of result.stdout.split("\n")) {
+      const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(line.trim());
+      const name = match?.[1];
+      const url = match?.[2];
+      const kind = match?.[3];
+      if (!name || !url || !kind) {
+        continue;
+      }
+      const entry = byName.get(name) ?? { fetchUrl: null, pushUrl: null };
+      if (kind === "fetch") {
+        entry.fetchUrl = url;
+      } else {
+        entry.pushUrl = url;
+      }
+      byName.set(name, entry);
+    }
+    const remotes = Array.from(byName.entries()).flatMap(([name, entry]) => {
+      const url = entry.fetchUrl ?? entry.pushUrl;
+      if (!url) {
+        return [];
+      }
+      return [
+        {
+          name,
+          url,
+          pushUrl: entry.pushUrl ? Option.some(entry.pushUrl) : Option.none(),
+          isPrimary: name === "origin",
+        },
+      ];
+    });
+    return { remotes, freshness };
+  });
+
+  const listPullRequests: GitManagerShape["listPullRequests"] = Effect.fn("listPullRequests")(
+    function* (input) {
+      const remoteName = input.remote ?? "origin";
+      const remoteUrl = yield* gitCore.readConfigValue(input.cwd, `remote.${remoteName}.url`);
+      const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+      const provider = yield* sourceControlProvider(input.cwd);
+
+      // Single PR lookup by number, scoped to the selected remote's repository.
+      // A missing PR (or non-GitHub remote) resolves to an empty list.
+      if (input.number !== undefined) {
+        if (!provider.getPullRequestSummary || repository === null) {
+          return { pullRequests: [] };
+        }
+        const summary = yield* provider
+          .getPullRequestSummary({
+            cwd: input.cwd,
+            repo: repository,
+            reference: String(input.number),
+          })
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        return { pullRequests: summary ? [summary] : [] };
+      }
+
+      // listPullRequests is GitHub-only (optional on the provider shape); a
+      // non-GitHub remote yields an empty list rather than an error.
+      if (!provider.listPullRequests || repository === null) {
+        return { pullRequests: [] };
+      }
+      const pullRequests = yield* provider.listPullRequests({
+        cwd: input.cwd,
+        repo: repository,
+        state: input.state ?? "all",
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      });
+      return { pullRequests };
+    },
+  );
+
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -1795,6 +1896,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    listRemotes,
+    listPullRequests,
     preparePullRequestThread,
     runStackedAction,
   } satisfies GitManagerShape;

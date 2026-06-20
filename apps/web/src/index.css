@@ -9,6 +9,9 @@
   --workspace-controls-top: 0px;
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
+  /* Live page zoom factor (Cmd +/-), published by syncDocumentZoomFactorProperty
+     so titlebar chrome can stay aligned with the fixed native window controls. */
+  --app-zoom: 1;
 }
 
 .wco {

@@ -47,6 +47,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          bookmarked,
+          pull_request_number,
+          pull_request_remote,
           deleted_at
         )
         VALUES (
@@ -66,6 +69,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
+          ${row.bookmarked},
+          ${row.pullRequestNumber},
+          ${row.pullRequestRemote},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -85,6 +91,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
+          bookmarked = excluded.bookmarked,
+          pull_request_number = excluded.pull_request_number,
+          pull_request_remote = excluded.pull_request_remote,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -111,6 +120,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          bookmarked,
+          pull_request_number AS "pullRequestNumber",
+          pull_request_remote AS "pullRequestRemote",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -139,6 +151,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          bookmarked,
+          pull_request_number AS "pullRequestNumber",
+          pull_request_remote AS "pullRequestRemote",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

@@ -174,6 +174,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
   [WS_METHODS.gitRunStackedAction, AuthOrchestrationOperateScope],
   [WS_METHODS.gitResolvePullRequest, AuthOrchestrationOperateScope],
+  [WS_METHODS.gitListPullRequests, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsListRemotes, AuthOrchestrationReadScope],
   [WS_METHODS.gitPreparePullRequestThread, AuthOrchestrationOperateScope],
   [WS_METHODS.vcsListRefs, AuthOrchestrationReadScope],
   [WS_METHODS.vcsCreateWorktree, AuthOrchestrationOperateScope],
@@ -688,6 +690,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                ...(bootstrap.createThread.pullRequestReview !== undefined
+                  ? { pullRequestReview: bootstrap.createThread.pullRequestReview }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -1344,6 +1349,14 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               "rpc.aggregate": "git",
             },
           ),
+        [WS_METHODS.gitListPullRequests]: (input) =>
+          observeRpcEffect(WS_METHODS.gitListPullRequests, gitWorkflow.listPullRequests(input), {
+            "rpc.aggregate": "git",
+          }),
+        [WS_METHODS.vcsListRemotes]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsListRemotes, gitWorkflow.listRemotes(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,

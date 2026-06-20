@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  GitPullRequestIcon,
   Globe2Icon,
   SearchIcon,
   SettingsIcon,
@@ -41,6 +42,8 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
   ProjectId,
+  type EnvironmentId,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
   type SidebarProjectGroupingMode,
@@ -68,9 +71,11 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
+import { PullRequestPickerDialog, PullRequestStateIcon } from "./PullRequestPickerDialog";
+import { gitEnvironment } from "../state/git";
 import {
   readThreadShell,
   useProject,
@@ -267,6 +272,50 @@ function projectExpansionPreferenceKeys(project: SidebarProjectSnapshot): string
   ];
 }
 
+// PR-review threads carry a durable server-side identity (thread.pullRequestReview),
+// recorded at creation and backfilled from the "Review PR #N" title for pre-existing
+// threads, so categorization survives renames. The sidebar partitions chats by this
+// so the Development tab and the Pull Requests tab each show their own set of threads.
+const PULL_REQUEST_REVIEW_TITLE_PATTERN = /^Review PR #(\d+)(?: \(\d+\))?$/;
+function parsePullRequestReviewPrNumber(title: string): number | null {
+  const match = PULL_REQUEST_REVIEW_TITLE_PATTERN.exec(title);
+  return match ? Number(match[1]) : null;
+}
+
+function isPullRequestReviewThread(thread: SidebarThreadSummary): boolean {
+  // A thread is a PR review if it carries the durable server-side identity OR
+  // still has the "Review PR #N" title. The server records the identity at
+  // creation (and backfills it from the title for pre-existing threads), so it is
+  // rename-proof; the title check is a safety net for any thread that predates
+  // the field but has not yet been re-projected.
+  return thread.pullRequestReview !== null || parsePullRequestReviewPrNumber(thread.title) !== null;
+}
+
+// "Review PR #12" for the first review of a PR; "Review PR #12 (2)", "(3)", ...
+// when that PR is already being reviewed in the same project.
+function nextPullRequestReviewTitle(
+  prNumber: number,
+  projectRef: ScopedProjectRef,
+  threads: readonly SidebarThreadSummary[],
+): string {
+  const base = `Review PR #${prNumber}`;
+  const pattern = new RegExp(`^Review PR #${prNumber}(?: \\((\\d+)\\))?$`);
+  let highest = 0;
+  for (const thread of threads) {
+    if (
+      thread.archivedAt !== null ||
+      thread.environmentId !== projectRef.environmentId ||
+      thread.projectId !== projectRef.projectId
+    ) {
+      continue;
+    }
+    const match = pattern.exec(thread.title);
+    if (!match) continue;
+    highest = Math.max(highest, match[1] ? Number(match[1]) : 1);
+  }
+  return highest === 0 ? base : `${base} (${highest + 1})`;
+}
+
 function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
   switch (mode) {
     case "repository":
@@ -375,6 +424,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  // Bookmark + PR-review identity are server-owned thread fields.
+  const isBookmarked = thread.bookmarked;
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
@@ -386,6 +437,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     threadId: thread.id,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const environment = useEnvironment(thread.environmentId);
@@ -413,6 +467,31 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         })
       : null,
   );
+  // For PR-review threads, poll the reviewed PR's live status (open/draft/
+  // merged/closed). The listPullRequests atom polls every 15s while mounted.
+  // Prefer the durable server-side identity; fall back to the PR number parsed
+  // from the "Review PR #N" title (assuming the default remote) so any thread
+  // that predates the field still gets a live badge.
+  const reviewPrNumberFromTitle = parsePullRequestReviewPrNumber(thread.title);
+  const reviewCoords =
+    thread.pullRequestReview ??
+    (reviewPrNumberFromTitle !== null
+      ? { prNumber: reviewPrNumberFromTitle, remote: "origin" }
+      : null);
+  const reviewPullRequestCwd = threadProjectCwd ?? props.projectCwd;
+  const reviewPullRequestQuery = useEnvironmentQuery(
+    reviewCoords && reviewPullRequestCwd !== null
+      ? gitEnvironment.listPullRequests({
+          environmentId: thread.environmentId,
+          input: {
+            cwd: reviewPullRequestCwd,
+            remote: reviewCoords.remote,
+            number: reviewCoords.prNumber,
+          },
+        })
+      : null,
+  );
+  const reviewPullRequest = reviewPullRequestQuery.data?.pullRequests[0] ?? null;
   const isHighlighted = isActive || isSelected;
   const handleOpenDiscoveredPort = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -476,9 +555,27 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   );
   const handleRowClick = useCallback(
     (event: React.MouseEvent) => {
+      // Alt+click toggles the server-persisted bookmark instead of navigating.
+      if (event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        void updateThreadMetadata({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id, bookmarked: !isBookmarked },
+        });
+        return;
+      }
       handleThreadClick(event, threadRef, orderedProjectThreadKeys);
     },
-    [handleThreadClick, orderedProjectThreadKeys, threadRef],
+    [
+      handleThreadClick,
+      isBookmarked,
+      orderedProjectThreadKeys,
+      thread.environmentId,
+      thread.id,
+      threadRef,
+      updateThreadMetadata,
+    ],
   );
   const handleRowDoubleClick = useCallback(
     (event: React.MouseEvent) => {
@@ -666,6 +763,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
+          isBookmarked,
         })} relative isolate`}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
@@ -688,6 +786,24 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 }
               />
               <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+            </Tooltip>
+          )}
+          {!prStatus && reviewPullRequest && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-flex items-center justify-center">
+                    <PullRequestStateIcon pr={reviewPullRequest} className="size-3" />
+                  </span>
+                }
+              />
+              <TooltipPopup side="top">
+                {`#${reviewPullRequest.number} · ${
+                  reviewPullRequest.state === "open" && reviewPullRequest.isDraft
+                    ? "draft"
+                    : reviewPullRequest.state
+                }`}
+              </TooltipPopup>
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
@@ -1044,6 +1160,8 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 
 interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
+  showThreads: boolean;
+  onReviewPullRequest: (project: SidebarProjectSnapshot) => void;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
@@ -1064,6 +1182,8 @@ interface SidebarProjectItemProps {
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
   const {
     project,
+    showThreads,
+    onReviewPullRequest,
     isThreadListExpanded,
     activeRouteThreadKey,
     newThreadShortcutLabel,
@@ -1269,7 +1389,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      // Projects tab shows non-PR chats; Pull Requests tab shows PR-review chats.
+      projectThreads.filter(
+        (thread) =>
+          thread.archivedAt === null && isPullRequestReviewThread(thread) === !showThreads,
+      ),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -1282,7 +1406,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [projectThreads, threadLastVisitedAts, threadSortOrder, showThreads]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -2282,18 +2406,32 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
                 <button
                   type="button"
-                  aria-label={`Create new thread in ${project.displayName}`}
+                  aria-label={
+                    showThreads
+                      ? `Create new thread in ${project.displayName}`
+                      : `Review a pull request in ${project.displayName}`
+                  }
                   data-testid="new-thread-button"
                   className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
-                  onClick={handleCreateThreadClick}
+                  onClick={
+                    showThreads ? handleCreateThreadClick : () => onReviewPullRequest(project)
+                  }
                 >
-                  <SquarePenIcon className="size-3.5" />
+                  {showThreads ? (
+                    <SquarePenIcon className="size-3.5" />
+                  ) : (
+                    <GitPullRequestIcon className="size-3.5" />
+                  )}
                 </button>
               </div>
             }
           />
           <TooltipPopup side="top">
-            {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+            {showThreads
+              ? newThreadShortcutLabel
+                ? `New thread (${newThreadShortcutLabel})`
+                : "New thread"
+              : "Review a pull request"}
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -2676,8 +2814,8 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
-  const wordmark = (
-    <div className="flex items-center gap-2">
+  const renderWordmark = (extraClassName = "") => (
+    <div className={`flex items-center gap-2 ${extraClassName}`}>
       <SidebarTrigger className="shrink-0 md:hidden" />
       <Tooltip>
         <TooltipTrigger
@@ -2692,7 +2830,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
                 Code
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                {APP_STAGE_LABEL}
+                ILH
               </span>
             </Link>
           }
@@ -2705,11 +2843,22 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 
   return isElectron ? (
-    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
-      {wordmark}
+    // The macOS traffic lights are native chrome at a fixed screen position that
+    // does not scale with page zoom. Dividing the offsets by --app-zoom (the true
+    // zoom from webFrame, published by syncDocumentZoomFactorProperty) holds a
+    // constant *screen* left gap and keeps the wordmark at the screen position it
+    // has at 100% zoom — the traffic lights' center, which sits at the header's own
+    // center (h-[52px] -> 26px) — at every zoom level. At 100% the translate is 0,
+    // i.e. plain items-center. With no accurate zoom source --app-zoom is 1, so the
+    // resting 90px / centered layout is preserved. On Windows/Linux (wco) env()
+    // geometry is already zoom-correct, so the translate resets to 0.
+    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[calc(90px/var(--app-zoom,1))] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
+      {renderWordmark("translate-y-[calc(26px/var(--app-zoom,1)_-_26px)] wco:translate-y-0")}
     </SidebarHeader>
   ) : (
-    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
+    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+      {renderWordmark()}
+    </SidebarHeader>
   );
 });
 
@@ -2779,6 +2928,8 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  sidebarSection: "projects" | "pullRequests";
+  onToggleSidebarSection: () => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2820,6 +2971,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    sidebarSection,
+    onToggleSidebarSection,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2846,6 +2999,26 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+
+  const showThreads = sidebarSection === "projects";
+  const [reviewTarget, setReviewTarget] = useState<{
+    environmentId: EnvironmentId;
+    cwd: string;
+    projectName: string;
+    projectRef: ScopedProjectRef;
+  } | null>(null);
+  const handleReviewPullRequest = useCallback((project: SidebarProjectSnapshot) => {
+    const cwd = project.workspaceRoot;
+    if (!cwd) return;
+    setReviewTarget({
+      environmentId: project.environmentId,
+      cwd,
+      projectName: project.displayName,
+      projectRef: scopeProjectRef(project.environmentId, project.id),
+    });
+  }, []);
+  // Used to disambiguate duplicate PR-review titles ("Review PR #N (2)").
+  const allThreadShells = useThreadShells();
 
   return (
     <SidebarContent className="gap-0">
@@ -2897,9 +3070,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       ) : null}
       <SidebarGroup className="px-2 py-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-            Projects
-          </span>
+          <button
+            type="button"
+            onClick={onToggleSidebarSection}
+            className="cursor-pointer rounded text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 transition-colors hover:text-foreground"
+          >
+            {sidebarSection === "projects" ? "Development" : "Pull Requests"}
+          </button>
           <div className="flex items-center gap-1">
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
@@ -2949,6 +3126,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     {(dragHandleProps) => (
                       <SidebarProjectItem
                         project={project}
+                        showThreads={showThreads}
+                        onReviewPullRequest={handleReviewPullRequest}
                         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -2981,6 +3160,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <SidebarProjectListRow
                 key={project.projectKey}
                 project={project}
+                showThreads={showThreads}
+                onReviewPullRequest={handleReviewPullRequest}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -3009,6 +3190,34 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </div>
         )}
       </SidebarGroup>
+
+      {reviewTarget ? (
+        <PullRequestPickerDialog
+          open
+          environmentId={reviewTarget.environmentId}
+          cwd={reviewTarget.cwd}
+          projectName={reviewTarget.projectName}
+          onOpenChange={(open) => {
+            if (!open) setReviewTarget(null);
+          }}
+          onSelect={(pr, remote) => {
+            // Create the review thread directly with a prefilled prompt; branch /
+            // checkout are chosen normally in the thread composer afterward. The
+            // "Review PR #N" title seed drives the server-side PR-review identity
+            // (recorded durably at thread creation).
+            const reviewPrompt = `Please review PR #${pr.number} against ${remote}/${pr.baseBranch}: ${pr.url}\nReview only the changeset of this PR. Tell me if I should approve or not approve as a reviewer.`;
+            void handleNewThread(reviewTarget.projectRef, {
+              titleSeed: nextPullRequestReviewTitle(
+                pr.number,
+                reviewTarget.projectRef,
+                allThreadShells,
+              ),
+              initialPrompt: reviewPrompt,
+            });
+            setReviewTarget(null);
+          }}
+        />
+      ) : null}
     </SidebarContent>
   );
 });
@@ -3046,6 +3255,10 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const [sidebarSection, setSidebarSection] = useState<"projects" | "pullRequests">("projects");
+  const toggleSidebarSection = useCallback(() => {
+    setSidebarSection((current) => (current === "projects" ? "pullRequests" : "projects"));
+  }, []);
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
@@ -3296,53 +3509,57 @@ export default function Sidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
-  const visibleSidebarThreadKeys = useMemo(
-    () =>
-      sortedProjects.flatMap((project) => {
-        const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
-          ),
-          sidebarThreadSortOrder,
-        );
-        const projectExpanded = resolveProjectExpanded(
-          projectExpandedById,
-          projectExpansionPreferenceKeys(project),
-        );
-        const activeThreadKey = routeThreadKey ?? undefined;
-        const pinnedCollapsedThread =
-          !projectExpanded && activeThreadKey
-            ? (projectThreads.find(
-                (thread) =>
-                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
-                  activeThreadKey,
-              ) ?? null)
-            : null;
-        const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
-        if (!shouldShowThreadPanel) {
-          return [];
-        }
-        const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-        const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-        return renderedThreads.map((thread) =>
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        );
-      }),
-    [
-      sidebarThreadSortOrder,
-      sidebarThreadPreviewCount,
-      expandedThreadListsByProject,
-      projectExpandedById,
-      routeThreadKey,
-      sortedProjects,
-      threadsByProjectKey,
-    ],
-  );
+  const visibleSidebarThreadKeys = useMemo(() => {
+    // Match the per-tab partition: Projects shows non-PR chats, Pull Requests
+    // shows PR-review chats. Keeps jump hints / nav / prewarming in sync.
+    const wantPullRequestThreads = sidebarSection === "pullRequests";
+    return sortedProjects.flatMap((project) => {
+      const projectThreads = sortThreads(
+        (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+          (thread) =>
+            thread.archivedAt === null &&
+            isPullRequestReviewThread(thread) === wantPullRequestThreads,
+        ),
+        sidebarThreadSortOrder,
+      );
+      const projectExpanded = resolveProjectExpanded(
+        projectExpandedById,
+        projectExpansionPreferenceKeys(project),
+      );
+      const activeThreadKey = routeThreadKey ?? undefined;
+      const pinnedCollapsedThread =
+        !projectExpanded && activeThreadKey
+          ? (projectThreads.find(
+              (thread) =>
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                activeThreadKey,
+            ) ?? null)
+          : null;
+      const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
+      if (!shouldShowThreadPanel) {
+        return [];
+      }
+      const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
+      const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
+      const previewThreads =
+        isThreadListExpanded || !hasOverflowingThreads
+          ? projectThreads
+          : projectThreads.slice(0, sidebarThreadPreviewCount);
+      const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+      return renderedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      );
+    });
+  }, [
+    sidebarSection,
+    sidebarThreadSortOrder,
+    sidebarThreadPreviewCount,
+    expandedThreadListsByProject,
+    projectExpandedById,
+    routeThreadKey,
+    sortedProjects,
+    threadsByProjectKey,
+  ]);
   const threadJumpCommandByKey = useMemo(() => {
     const mapping = new Map<string, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadKey] of visibleSidebarThreadKeys.entries()) {
@@ -3635,6 +3852,8 @@ export default function Sidebar() {
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
+            sidebarSection={sidebarSection}
+            onToggleSidebarSection={toggleSidebarSection}
           />
 
           <SidebarSeparator />

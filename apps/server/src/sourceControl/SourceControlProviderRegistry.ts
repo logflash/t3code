@@ -127,6 +127,12 @@ function bindProviderContext(
         ...input,
         context: input.context ?? context,
       }),
+    // listPullRequests / getPullRequestSummary are optional (GitHub-only) and
+    // take an explicit repo, so forward them as-is when implemented.
+    ...(provider.listPullRequests ? { listPullRequests: provider.listPullRequests } : {}),
+    ...(provider.getPullRequestSummary
+      ? { getPullRequestSummary: provider.getPullRequestSummary }
+      : {}),
     getChangeRequest: (input) =>
       provider.getChangeRequest({
         ...input,

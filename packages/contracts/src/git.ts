@@ -97,6 +97,18 @@ const GitResolvedPullRequest = Schema.Struct({
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
+export const GitPullRequestSummary = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyStringSchema,
+  url: Schema.String,
+  state: GitPullRequestState,
+  isDraft: Schema.Boolean,
+  baseBranch: TrimmedNonEmptyStringSchema,
+  headBranch: TrimmedNonEmptyStringSchema,
+  author: Schema.NullOr(TrimmedNonEmptyStringSchema),
+});
+export type GitPullRequestSummary = typeof GitPullRequestSummary.Type;
+
 // RPC Inputs
 
 export const VcsStatusInput = Schema.Struct({
@@ -152,6 +164,21 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
+
+export const VcsListRemotesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsListRemotesInput = typeof VcsListRemotesInput.Type;
+
+export const GitListPullRequestsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  remote: Schema.optional(TrimmedNonEmptyStringSchema),
+  state: Schema.optional(Schema.Literals(["open", "closed", "merged", "all"])),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(1000))),
+  // When set, fetch just this PR (scoped to `remote`'s repository) instead of a list.
+  number: Schema.optional(PositiveInt),
+});
+export type GitListPullRequestsInput = typeof GitListPullRequestsInput.Type;
 
 export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -267,6 +294,11 @@ export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
 });
 export type GitResolvePullRequestResult = typeof GitResolvePullRequestResult.Type;
+
+export const GitListPullRequestsResult = Schema.Struct({
+  pullRequests: Schema.Array(GitPullRequestSummary),
+});
+export type GitListPullRequestsResult = typeof GitListPullRequestsResult.Type;
 
 export const GitPreparePullRequestThreadResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,

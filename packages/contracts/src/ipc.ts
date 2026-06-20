@@ -897,6 +897,12 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  /**
+   * Current renderer page zoom factor (webFrame.getZoomFactor()). Lets titlebar
+   * chrome stay aligned with the fixed native window controls as the page zooms.
+   * Optional so older preloads / non-desktop hosts simply report no zoom.
+   */
+  getZoomFactor?: () => number;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;

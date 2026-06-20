@@ -4,7 +4,7 @@ import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getZoomFactor: () => webFrame.getZoomFactor(),
   getLocalEnvironmentBootstrap: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
     if (typeof result !== "object" || result === null) {

@@ -611,6 +611,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            bookmarked: 0,
+            pullRequestNumber: event.payload.pullRequestReview?.prNumber ?? null,
+            pullRequestRemote: event.payload.pullRequestReview?.remote ?? null,
             deletedAt: null,
           });
           return;
@@ -661,6 +664,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.bookmarked !== undefined
+              ? { bookmarked: event.payload.bookmarked ? 1 : 0 }
               : {}),
             updatedAt: event.payload.updatedAt,
           });

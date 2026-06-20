@@ -324,6 +324,35 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   }),
 );
 
+it.effect("carries a bookmark toggle on thread.meta-updated payloads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadMetaUpdatedPayload({
+      threadId: "thread-1",
+      bookmarked: true,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.bookmarked, true);
+  }),
+);
+
+it.effect("records the PR-review identity on thread.created payloads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Review PR #123",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      pullRequestReview: { prNumber: 123, remote: "origin" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.pullRequestReview, { prNumber: 123, remote: "origin" });
+  }),
+);
+
 it.effect("decodes thread archive and unarchive commands", () =>
   Effect.gen(function* () {
     const archive = yield* decodeOrchestrationCommand({

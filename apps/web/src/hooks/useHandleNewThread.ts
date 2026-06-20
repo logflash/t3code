@@ -40,6 +40,8 @@ export function useNewThreadHandler() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        titleSeed?: string | null;
+        initialPrompt?: string;
       },
     ): Promise<void> => {
       const {
@@ -49,6 +51,7 @@ export function useNewThreadHandler() {
         applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
+        setPrompt,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
       const project = projects.find(
@@ -62,6 +65,8 @@ export function useNewThreadHandler() {
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
+      const hasTitleSeedOption = options?.titleSeed !== undefined;
+      const hasInitialPromptOption = options?.initialPrompt !== undefined;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -80,11 +85,12 @@ export function useNewThreadHandler() {
         : null;
       if (reusableStoredDraftThread) {
         return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasTitleSeedOption) {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
               ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
               ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+              ...(hasTitleSeedOption ? { titleSeed: options?.titleSeed ?? null } : {}),
             });
           }
           setLogicalProjectDraftThreadId(
@@ -95,6 +101,9 @@ export function useNewThreadHandler() {
               threadId: reusableStoredDraftThread.threadId,
             },
           );
+          if (hasInitialPromptOption) {
+            setPrompt(reusableStoredDraftThread.draftId, options?.initialPrompt ?? "");
+          }
           if (
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === reusableStoredDraftThread.draftId
@@ -114,11 +123,12 @@ export function useNewThreadHandler() {
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
         latestActiveDraftThread.promotedTo == null
       ) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasTitleSeedOption) {
           setDraftThreadContext(currentRouteTarget.draftId, {
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasTitleSeedOption ? { titleSeed: options?.titleSeed ?? null } : {}),
           });
         }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
@@ -129,7 +139,11 @@ export function useNewThreadHandler() {
           ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
           ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+          ...(hasTitleSeedOption ? { titleSeed: options?.titleSeed ?? null } : {}),
         });
+        if (hasInitialPromptOption) {
+          setPrompt(currentRouteTarget.draftId, options?.initialPrompt ?? "");
+        }
         return Promise.resolve();
       }
 
@@ -144,8 +158,12 @@ export function useNewThreadHandler() {
           worktreePath: options?.worktreePath ?? null,
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
+          titleSeed: options?.titleSeed ?? null,
         });
         applyStickyState(draftId);
+        if (hasInitialPromptOption) {
+          setPrompt(draftId, options?.initialPrompt ?? "");
+        }
 
         await router.navigate({
           to: "/draft/$draftId",

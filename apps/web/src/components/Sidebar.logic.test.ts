@@ -647,6 +647,43 @@ describe("resolveThreadRowClassName", () => {
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
   });
+
+  it("tints idle bookmarked threads light yellow", () => {
+    const className = resolveThreadRowClassName({
+      isActive: false,
+      isSelected: false,
+      isBookmarked: true,
+    });
+    expect(className).toContain("before:bg-yellow-400/20");
+    expect(className).toContain("dark:before:bg-yellow-300/20");
+  });
+
+  it("layers the bookmark wash over selection and active state", () => {
+    const selected = resolveThreadRowClassName({
+      isActive: false,
+      isSelected: true,
+      isBookmarked: true,
+    });
+    expect(selected).toContain("bg-primary/15");
+    expect(selected).toContain("before:bg-yellow-400/20");
+
+    const active = resolveThreadRowClassName({
+      isActive: true,
+      isSelected: false,
+      isBookmarked: true,
+    });
+    expect(active).toContain("bg-accent/85");
+    expect(active).toContain("before:bg-yellow-400/20");
+  });
+
+  it("omits the bookmark wash when a thread is not bookmarked", () => {
+    const className = resolveThreadRowClassName({
+      isActive: true,
+      isSelected: true,
+      isBookmarked: false,
+    });
+    expect(className).not.toContain("before:bg-yellow-400/20");
+  });
 });
 
 describe("resolveProjectStatusIndicator", () => {
