@@ -24,6 +24,10 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
+  /** Cumulative API cost (USD) for this thread, shown after the title. */
+  activeThreadCostUsd?: number | null;
+  /** Whether the cost is a token×price estimate (e.g. Codex) vs a real figure (Claude). */
+  activeThreadCostEstimated?: boolean;
   activeProjectName: string | undefined;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -58,6 +62,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
+  activeThreadCostUsd,
+  activeThreadCostEstimated,
   activeProjectName,
   openInCwd,
   activeProjectScripts,
@@ -77,6 +83,13 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  // API cost (USD) for this thread. Hidden until it rounds to at least a cent so
+  // brand-new threads (and providers that report no cost) stay clean. Claude is a
+  // real SDK figure; Codex et al. are token×price estimates, prefixed "est.".
+  const costLabel =
+    typeof activeThreadCostUsd === "number" && activeThreadCostUsd >= 0.005
+      ? `${activeThreadCostEstimated ? "est. " : ""}$${activeThreadCostUsd.toFixed(2)}`
+      : null;
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -94,6 +107,14 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
+        {costLabel && (
+          <span
+            className="shrink-0 text-sm tabular-nums text-muted-foreground"
+            aria-label={`API cost ${costLabel}`}
+          >
+            ({costLabel})
+          </span>
+        )}
       </div>
       <div
         data-chat-header-actions

@@ -620,6 +620,29 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "turn.completed": {
+      // Record the turn's API cost (USD) as a metadata activity so the client can
+      // sum it per thread. Only some providers (Claude) report a dollar cost; when
+      // absent or non-positive we emit nothing. This activity is not rendered in
+      // the work log — see deriveWorkLogEntries.
+      const totalCostUsd = event.payload.totalCostUsd;
+      if (typeof totalCostUsd !== "number" || !Number.isFinite(totalCostUsd) || totalCostUsd <= 0) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "turn.api-cost",
+          summary: "Turn API cost",
+          payload: { totalCostUsd },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     default:
       break;
   }

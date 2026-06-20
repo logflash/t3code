@@ -164,6 +164,7 @@ import {
   formatElementContextLabel,
 } from "../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
+import { sumThreadApiCostUsd } from "../lib/threadCost";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -1685,6 +1686,13 @@ function ChatViewContent(props: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const activeThreadApiCostUsd = useMemo(
+    () => sumThreadApiCostUsd(threadActivities),
+    [threadActivities],
+  );
+  // Claude reports a real SDK cost; everything else (e.g. Codex) is a
+  // token×price estimate, so label non-Claude threads accordingly.
+  const activeThreadCostEstimated = (selectedProvider as string) !== "claudeAgent";
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -4778,6 +4786,8 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            activeThreadCostUsd={activeThreadApiCostUsd}
+            activeThreadCostEstimated={activeThreadCostEstimated}
             activeProjectName={activeProject?.title}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}

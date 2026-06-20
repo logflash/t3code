@@ -61,6 +61,7 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { applyCodexTurnCost, makeCodexCostState, type CodexCostState } from "./codexCost.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -89,6 +90,8 @@ interface CodexAdapterSessionContext {
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
+  /** Tracks the in-flight turn's model + token usage to estimate per-turn cost. */
+  readonly cost: CodexCostState;
   stopped: boolean;
 }
 
@@ -1438,10 +1441,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        const costState = makeCodexCostState();
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = applyCodexTurnCost(
+              mapToRuntimeEvents(event, event.threadId),
+              costState,
+            );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1479,6 +1486,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           scope: sessionScope,
           runtime,
           eventFiber,
+          cost: costState,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -1527,6 +1535,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
+    // Record the model this turn runs under for per-turn cost estimation, and
+    // clear the previous turn's token usage so it can't be re-counted. A later
+    // `model.rerouted` event overrides the model with the one Codex actually ran.
+    session.cost.currentModel =
+      input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
+    session.cost.latestTurnTokens = undefined;
     const reasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
