@@ -10,6 +10,26 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
+/**
+ * Whether a PR-review thread should be auto-archived now that its reviewed PR has
+ * reached a terminal state. Keeps the PR section tidy. Skips the thread the user
+ * is actively viewing (so it doesn't yank them out) and running threads (archiving
+ * those is rejected by the server anyway). Forks of PR reviews carry the same
+ * `pullRequestReview` identity, so they resolve a `prState` and tidy identically.
+ */
+export function shouldAutoArchiveResolvedPrThread(input: {
+  readonly enabled: boolean;
+  readonly alreadyArchived: boolean;
+  readonly isActive: boolean;
+  readonly isRunning: boolean;
+  readonly prState: "open" | "closed" | "merged" | null | undefined;
+}): boolean {
+  if (!input.enabled || input.alreadyArchived || input.isActive || input.isRunning) {
+    return false;
+  }
+  return input.prState === "merged" || input.prState === "closed";
+}
+
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a

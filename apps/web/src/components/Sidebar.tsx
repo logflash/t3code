@@ -193,6 +193,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  shouldAutoArchiveResolvedPrThread,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
@@ -522,6 +523,37 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
+  // Auto-tidy: once a reviewed PR is merged/closed, archive its review thread so
+  // the PR section stays clean. Forks of PR reviews inherit `pullRequestReview`,
+  // so `reviewPullRequest` resolves for them too and they tidy identically.
+  const autoArchiveMergedPrThreads = useSettings<boolean>(
+    (s) => s.autoArchiveMergedPullRequestThreads,
+  );
+  const autoArchivedPrThreadRef = useRef(false);
+  useEffect(() => {
+    if (autoArchivedPrThreadRef.current) return;
+    if (
+      !shouldAutoArchiveResolvedPrThread({
+        enabled: autoArchiveMergedPrThreads,
+        alreadyArchived: thread.archivedAt !== null,
+        isActive,
+        isRunning: isThreadRunning,
+        prState: reviewPullRequest?.state ?? null,
+      })
+    ) {
+      return;
+    }
+    autoArchivedPrThreadRef.current = true;
+    void attemptArchiveThread(threadRef);
+  }, [
+    autoArchiveMergedPrThreads,
+    thread.archivedAt,
+    isActive,
+    isThreadRunning,
+    reviewPullRequest?.state,
+    attemptArchiveThread,
+    threadRef,
+  ]);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -2275,13 +2307,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      // Block deletion while an un-sent fork still branches from this thread: the
+      // draft pulls its history/PR identity from the live source at send time, so
+      // deleting it first would silently produce an empty, untracked fork.
+      const hasPendingFork = useComposerDraftStore.getState().hasUnsentForkDraftOfThread(thread.id);
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+          hasPendingFork
+            ? {
+                id: "delete",
+                label: "Delete (fork in progress)",
+                destructive: true,
+                icon: "trash",
+                disabled: true,
+              }
+            : { id: "delete", label: "Delete", destructive: true, icon: "trash" },
         ],
         position,
       );
@@ -2314,6 +2358,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
       if (clicked !== "delete") return;
+      if (hasPendingFork) return; // defensive: disabled items shouldn't be clickable
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
           [

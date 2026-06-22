@@ -398,6 +398,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.autoArchiveMergedPullRequestThreads !==
+      DEFAULT_UNIFIED_SETTINGS.autoArchiveMergedPullRequestThreads
+        ? ["Auto-archive resolved PRs"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -422,6 +426,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isGitWritingModelDirty,
       settings.autoOpenPlanSidebar,
+      settings.autoArchiveMergedPullRequestThreads,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -684,6 +689,34 @@ export function GeneralSettingsPanel() {
                 updateSettings({ autoOpenPlanSidebar: Boolean(checked) })
               }
               aria-label="Open the task panel automatically"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Auto-archive resolved PRs"
+          description="Archive a PR-review thread automatically once its pull request is merged or closed."
+          resetAction={
+            settings.autoArchiveMergedPullRequestThreads !==
+            DEFAULT_UNIFIED_SETTINGS.autoArchiveMergedPullRequestThreads ? (
+              <SettingResetButton
+                label="auto-archive resolved PRs"
+                onClick={() =>
+                  updateSettings({
+                    autoArchiveMergedPullRequestThreads:
+                      DEFAULT_UNIFIED_SETTINGS.autoArchiveMergedPullRequestThreads,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.autoArchiveMergedPullRequestThreads}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoArchiveMergedPullRequestThreads: Boolean(checked) })
+              }
+              aria-label="Auto-archive resolved PR reviews"
             />
           }
         />

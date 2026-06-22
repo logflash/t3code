@@ -350,6 +350,12 @@ interface ComposerDraftStoreState {
   getDraftThread: (threadRef: ComposerThreadTarget) => DraftThreadState | null;
   listDraftThreadKeys: () => string[];
   hasDraftThreadsInEnvironment: (environmentId: EnvironmentId) => boolean;
+  /**
+   * Whether an un-sent fork draft currently branches from the given thread.
+   * Used to block deleting a source thread while a fork of it is still a draft
+   * (the draft derives its history/PR identity from the live source at send).
+   */
+  hasUnsentForkDraftOfThread: (threadId: ThreadId) => boolean;
   /** Creates or updates the draft session tracked for a logical project. */
   setLogicalProjectDraftThreadId: (
     logicalProjectKey: string,
@@ -2245,6 +2251,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         hasDraftThreadsInEnvironment: (environmentId) =>
           Object.values(get().draftThreadsByThreadKey).some(
             (draftThread) => draftThread.environmentId === environmentId,
+          ),
+        hasUnsentForkDraftOfThread: (threadId) =>
+          Object.values(get().draftThreadsByThreadKey).some(
+            (draftThread) =>
+              draftThread.forkedFromThreadId === threadId && draftThread.promotedTo == null,
           ),
         setLogicalProjectDraftThreadId: (logicalProjectKey, projectRef, draftId, options) => {
           const normalizedLogicalProjectKey = logicalProjectDraftKey(logicalProjectKey);

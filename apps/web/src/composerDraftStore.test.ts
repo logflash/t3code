@@ -731,6 +731,21 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
+  it("reports an un-sent fork draft branching from a thread", () => {
+    const store = useComposerDraftStore.getState();
+    expect(store.hasUnsentForkDraftOfThread(threadId)).toBe(false);
+
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+      threadId: otherThreadId,
+      forkedFromThreadId: threadId,
+    });
+
+    const next = useComposerDraftStore.getState();
+    expect(next.hasUnsentForkDraftOfThread(threadId)).toBe(true);
+    // A thread with no fork dangling off it is freely deletable.
+    expect(next.hasUnsentForkDraftOfThread(otherThreadId)).toBe(false);
+  });
+
   it("stores and reads project draft thread ids via actions", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftThreadByProjectRef(projectRef)).toBeNull();

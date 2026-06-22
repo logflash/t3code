@@ -16,6 +16,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  shouldAutoArchiveResolvedPrThread,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -49,6 +50,34 @@ function makeLatestTurn(overrides?: {
     completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("shouldAutoArchiveResolvedPrThread", () => {
+  const base = {
+    enabled: true,
+    alreadyArchived: false,
+    isActive: false,
+    isRunning: false,
+    prState: "merged" as "open" | "closed" | "merged" | null | undefined,
+  };
+
+  it("archives merged and closed PR reviews", () => {
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, prState: "merged" })).toBe(true);
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, prState: "closed" })).toBe(true);
+  });
+
+  it("leaves open PRs and non-PR threads alone", () => {
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, prState: "open" })).toBe(false);
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, prState: null })).toBe(false);
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, prState: undefined })).toBe(false);
+  });
+
+  it("never archives when disabled, already archived, active, or running", () => {
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, enabled: false })).toBe(false);
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, alreadyArchived: true })).toBe(false);
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, isActive: true })).toBe(false);
+    expect(shouldAutoArchiveResolvedPrThread({ ...base, isRunning: true })).toBe(false);
+  });
+});
 
 describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {
