@@ -2803,7 +2803,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
+      // Benign mid-session system events with no work-log value. `commands_changed`
+      // fires whenever the available slash-command set changes (e.g. on every MCP
+      // server reconnect); `task_updated` is a task state-change ping. Dropping them
+      // keeps the work log from filling with content-less warning rows.
       case "thinking_tokens":
+      case "commands_changed":
+      case "task_updated":
         return;
       case "permission_denied":
         yield* offerRuntimeEvent({
