@@ -29,9 +29,9 @@ import {
   buildFileDiffRenderKey,
   getDiffCollapseIconClassName,
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
+import { resolveCodeViewerTheme, useCodeBlockTheme } from "../hooks/useCodeBlockTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
@@ -67,7 +67,6 @@ import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 
 type DiffRenderMode = "stacked" | "split";
-type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 
 interface CollapsedDiffFilesState {
@@ -184,6 +183,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline", composerDraftTarget }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
+  const viewerTheme = resolveCodeViewerTheme(useCodeBlockTheme(), resolvedTheme);
   const settings = useClientSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
@@ -844,8 +844,8 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
                     diffStyle: diffRenderMode === "split" ? "split" : "unified",
                     lineDiffType: "none",
                     overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    themeType: resolvedTheme as DiffThemeType,
+                    theme: viewerTheme.theme,
+                    themeType: viewerTheme.themeType,
                     unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                     stickyHeaders: true,
                     layout: { paddingTop: 8, paddingBottom: 8, gap: 8 },

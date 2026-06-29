@@ -3,11 +3,11 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { resolveCodeViewerTheme, useCodeBlockTheme } from "../hooks/useCodeBlockTheme";
 
 export class DiffWorkerError extends Schema.TaggedErrorClass<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
-  themeName: Schema.Literals(["pierre-light", "pierre-dark"]),
+  themeName: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -15,7 +15,7 @@ export class DiffWorkerError extends Schema.TaggedErrorClass<DiffWorkerError>()(
   }
 }
 
-function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
+function DiffWorkerThemeSync({ themeName }: { themeName: string }) {
   const workerPool = useWorkerPool();
 
   useEffect(() => {
@@ -47,7 +47,13 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   const { resolvedTheme } = useTheme();
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  // Drive the worker-pool highlighter with the user's selected code theme so
+  // file and diff surfaces match chat code blocks. `useCodeBlockTheme` also
+  // registers the selected theme on the main thread; the pool resolves it there
+  // and ships the resolved theme to its workers, so a registered custom theme id
+  // is a valid name to hand the workers. Falls back to the pierre theme for the
+  // app's mode until a custom theme is selected and loaded.
+  const themeName = resolveCodeViewerTheme(useCodeBlockTheme(), resolvedTheme).theme;
   const workerPoolSize = useMemo(() => {
     const cores =
       typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);
@@ -63,7 +69,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
           } catch (cause) {
             throw new DiffWorkerError({
               operation: "create-worker",
-              themeName: diffThemeName,
+              themeName,
               cause,
             });
           }
@@ -72,12 +78,12 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
         totalASTLRUCacheSize: 240,
       }}
       highlighterOptions={{
-        theme: diffThemeName,
+        theme: themeName,
         tokenizeMaxLineLength: 1_000,
         useTokenTransformer: true,
       }}
     >
-      <DiffWorkerThemeSync themeName={diffThemeName} />
+      <DiffWorkerThemeSync themeName={themeName} />
       {children}
     </WorkerPoolContextProvider>
   );

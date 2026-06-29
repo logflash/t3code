@@ -2,6 +2,7 @@ import { useActiveEnvironmentId } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentQuery } from "../state/query";
 import { ensureCustomThemeRegistered } from "../lib/shikiThemeRegistry";
+import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useClientSettings } from "./useSettings";
 
 export interface CodeBlockThemeState {
@@ -11,6 +12,13 @@ export interface CodeBlockThemeState {
   readonly background: string | null;
   /** `editor.foreground` of the resolved theme. */
   readonly foreground: string | null;
+  /**
+   * Whether the resolved theme is a light or dark theme, so consumers can drive
+   * a viewer's `themeType` correctly even when the selected code theme's mode
+   * differs from the app's (e.g. a dark code theme while the app is in light).
+   * `null` until resolved / when no custom theme is selected.
+   */
+  readonly type: "light" | "dark" | null;
   /**
    * `true` once the selected theme's JSON has been fetched and registered with
    * the highlighter. Callers should keep using the default theme until this is
@@ -23,6 +31,7 @@ const INACTIVE: CodeBlockThemeState = {
   activeThemeId: null,
   background: null,
   foreground: null,
+  type: null,
   isReady: false,
 };
 
@@ -49,7 +58,13 @@ export function useCodeBlockTheme(): CodeBlockThemeState {
   const resolved = data && data.id === codeBlockThemeId ? data : null;
   if (!resolved) {
     // Selected but not yet fetched (or failed) — caller falls back to default.
-    return { activeThemeId: codeBlockThemeId, background: null, foreground: null, isReady: false };
+    return {
+      activeThemeId: codeBlockThemeId,
+      background: null,
+      foreground: null,
+      type: null,
+      isReady: false,
+    };
   }
 
   // Idempotent: registers the theme with the highlighter the first time its JSON
@@ -60,6 +75,35 @@ export function useCodeBlockTheme(): CodeBlockThemeState {
     activeThemeId: codeBlockThemeId,
     background: resolved.background ?? null,
     foreground: resolved.foreground ?? null,
+    type: resolved.type,
     isReady: true,
   };
+}
+
+/** Resolved `theme`/`themeType` options for an `@pierre/diffs` viewer surface. */
+export interface CodeViewerTheme {
+  /** Theme name to pass to `@pierre/diffs` (a registered custom theme id or a pierre theme). */
+  readonly theme: string;
+  /** Light/dark mode for the viewer chrome and diff overlays. */
+  readonly themeType: "light" | "dark";
+}
+
+/**
+ * Resolves the `theme`/`themeType` for file and diff viewers (`@pierre/diffs`)
+ * from the user's selected code theme. When a custom theme is selected and ready
+ * (registered with the shared highlighter), use it — including its own light/dark
+ * type so a dark theme renders correctly even when the app is in light mode.
+ * Otherwise fall back to the built-in pierre theme for the app's current mode.
+ *
+ * Mirrors how `ChatMarkdown` picks the code-block theme so file viewers, diffs,
+ * and chat code blocks all honour the same setting.
+ */
+export function resolveCodeViewerTheme(
+  codeTheme: CodeBlockThemeState,
+  resolvedTheme: "light" | "dark",
+): CodeViewerTheme {
+  if (codeTheme.isReady && codeTheme.activeThemeId) {
+    return { theme: codeTheme.activeThemeId, themeType: codeTheme.type ?? resolvedTheme };
+  }
+  return { theme: resolveDiffThemeName(resolvedTheme), themeType: resolvedTheme };
 }

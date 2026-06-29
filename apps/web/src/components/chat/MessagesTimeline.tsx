@@ -33,11 +33,12 @@ import {
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import { getRenderablePatch, resolveFileDiffPath } from "../../lib/diffRendering";
 import {
-  getRenderablePatch,
-  resolveDiffThemeName,
-  resolveFileDiffPath,
-} from "../../lib/diffRendering";
+  type CodeViewerTheme,
+  resolveCodeViewerTheme,
+  useCodeBlockTheme,
+} from "../../hooks/useCodeBlockTheme";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -126,6 +127,7 @@ interface TimelineRowSharedState {
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  codeViewerTheme: CodeViewerTheme;
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
@@ -482,6 +484,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     window.setTimeout(jump, 320);
   }, [scrollToMessageId, rows, timelineEntries, expandedTurnIds, listRef]);
 
+  const { theme: codeViewerThemeName, themeType: codeViewerThemeType } = resolveCodeViewerTheme(
+    useCodeBlockTheme(),
+    resolvedTheme,
+  );
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       timestampFormat,
@@ -489,6 +495,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       threadRef: parseScopedThreadKey(routeThreadKey),
       markdownCwd,
       resolvedTheme,
+      codeViewerTheme: { theme: codeViewerThemeName, themeType: codeViewerThemeType },
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
@@ -503,6 +510,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       routeThreadKey,
       markdownCwd,
       resolvedTheme,
+      codeViewerThemeName,
+      codeViewerThemeType,
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
@@ -1744,7 +1753,8 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             options={{
               collapsed: false,
               diffStyle: "unified",
-              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              theme: ctx.codeViewerTheme.theme,
+              themeType: ctx.codeViewerTheme.themeType,
             }}
           />
         ))}
