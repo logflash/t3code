@@ -20,6 +20,7 @@ import {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
+  Component,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
@@ -32,6 +33,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { cn } from "~/lib/utils";
+import { createTerminalWriter, type TerminalWriter } from "~/lib/terminalWriter";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import {
@@ -81,14 +83,52 @@ function clampDrawerHeight(height: number): number {
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
 }
 
-function writeSystemMessage(terminal: Terminal, message: string): void {
-  terminal.write(`\r\n[terminal] ${message}\r\n`);
+function writeSystemMessage(writer: TerminalWriter | null, message: string): void {
+  writer?.writeMessage(`\r\n[terminal] ${message}\r\n`);
 }
 
-function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
-  terminal.write("\u001bc");
-  if (buffer.length > 0) {
-    terminal.write(buffer);
+/**
+ * Isolates a terminal pane: any render error in a terminal stays contained here
+ * instead of bubbling to the app-level boundary and taking the whole window
+ * down. Keyed by terminal id at the call site, so switching terminals (or a
+ * restart) gives a fresh pane.
+ */
+class TerminalErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  override componentDidCatch(error: unknown): void {
+    console.error("[terminal] pane render error (isolated to this terminal)", error);
+  }
+
+  private readonly handleRestart = (): void => {
+    this.setState({ hasError: false });
+  };
+
+  override render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-4 text-center">
+          <p className="text-sm text-muted-foreground">
+            This terminal hit an error and was stopped.
+          </p>
+          <button
+            type="button"
+            onClick={this.handleRestart}
+            className="rounded-md border border-border/70 px-3 py-1 text-xs text-foreground transition-colors hover:bg-muted hover:cursor-pointer"
+          >
+            Restart terminal
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
   }
 }
 
@@ -309,6 +349,7 @@ export function TerminalViewport({
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const writerRef = useRef<TerminalWriter | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -399,6 +440,7 @@ export function TerminalViewport({
     fitTerminalSafely(fitAddon);
 
     terminalRef.current = terminal;
+    writerRef.current = createTerminalWriter(terminal);
     fitAddonRef.current = fitAddon;
     previousSessionRef.current = {
       buffer: "",
@@ -492,7 +534,10 @@ export function TerminalViewport({
       const result = await writeTerminal(data);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallbackError);
+        writeSystemMessage(
+          writerRef.current,
+          error instanceof Error ? error.message : fallbackError,
+        );
       }
     };
 
@@ -575,7 +620,7 @@ export function TerminalViewport({
               if (match.kind === "url") {
                 if (!localApi) {
                   writeSystemMessage(
-                    latestTerminal,
+                    writerRef.current,
                     "Opening links is unavailable in this browser.",
                   );
                   return;
@@ -583,7 +628,7 @@ export function TerminalViewport({
                 const fallbackToBrowser = () => {
                   void localApi.shell.openExternal(match.text).catch((error: unknown) => {
                     writeSystemMessage(
-                      latestTerminal,
+                      writerRef.current,
                       error instanceof Error ? error.message : "Unable to open link",
                     );
                   });
@@ -607,7 +652,7 @@ export function TerminalViewport({
                 }
                 const error = squashAtomCommandFailure(result);
                 writeSystemMessage(
-                  latestTerminal,
+                  writerRef.current,
                   error instanceof Error ? error.message : "Unable to open path",
                 );
               })();
@@ -625,7 +670,7 @@ export function TerminalViewport({
         }
         const error = squashAtomCommandFailure(result);
         writeSystemMessage(
-          terminal,
+          writerRef.current,
           error instanceof Error ? error.message : "Terminal write failed",
         );
       })();
@@ -698,6 +743,8 @@ export function TerminalViewport({
       window.removeEventListener("mouseup", handleMouseUp);
       mount.removeEventListener("pointerdown", handlePointerDown);
       themeObserver.disconnect();
+      writerRef.current?.dispose();
+      writerRef.current = null;
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();
@@ -725,18 +772,14 @@ export function TerminalViewport({
       return;
     }
 
-    if (
-      current.buffer.length >= previous.buffer.length &&
-      current.buffer.startsWith(previous.buffer)
-    ) {
-      terminal.write(current.buffer.slice(previous.buffer.length));
-    } else {
-      writeTerminalBuffer(terminal, current.buffer);
-    }
+    // Render through the back-pressured writer: it diffs against what xterm
+    // already shows (append vs. reset+rewrite) and bounds in-flight writes so a
+    // high-throughput burst can't overflow xterm's write buffer and crash the app.
+    writerRef.current?.renderBuffer(current.buffer);
     terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
-      writeSystemMessage(terminal, current.error);
+      writeSystemMessage(writerRef.current, current.error);
     }
 
     if (current.status === "running") {
@@ -748,7 +791,7 @@ export function TerminalViewport({
     ) {
       hasHandledExitRef.current = true;
       writeSystemMessage(
-        terminal,
+        writerRef.current,
         current.status === "closed" ? "Terminal closed" : "Process exited",
       );
       window.setTimeout(() => {
@@ -1328,26 +1371,28 @@ export default function ThreadTerminalDrawer({
                       }}
                     >
                       <div className="h-full p-1">
-                        <TerminalViewport
-                          threadRef={threadRef}
-                          threadId={threadId}
-                          terminalId={terminalId}
-                          terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
-                          cwd={terminalLaunchLocation.cwd}
-                          {...(terminalLaunchLocation.worktreePath !== undefined
-                            ? { worktreePath: terminalLaunchLocation.worktreePath }
-                            : {})}
-                          {...(terminalLaunchLocation.runtimeEnv
-                            ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
-                            : {})}
-                          onSessionExited={() => onCloseTerminal(terminalId)}
-                          onAddTerminalContext={onAddTerminalContext}
-                          focusRequestId={focusRequestId}
-                          autoFocus={terminalId === resolvedActiveTerminalId}
-                          resizeEpoch={resizeEpoch}
-                          drawerHeight={drawerHeight}
-                          keybindings={keybindings}
-                        />
+                        <TerminalErrorBoundary key={terminalId}>
+                          <TerminalViewport
+                            threadRef={threadRef}
+                            threadId={threadId}
+                            terminalId={terminalId}
+                            terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                            cwd={terminalLaunchLocation.cwd}
+                            {...(terminalLaunchLocation.worktreePath !== undefined
+                              ? { worktreePath: terminalLaunchLocation.worktreePath }
+                              : {})}
+                            {...(terminalLaunchLocation.runtimeEnv
+                              ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
+                              : {})}
+                            onSessionExited={() => onCloseTerminal(terminalId)}
+                            onAddTerminalContext={onAddTerminalContext}
+                            focusRequestId={focusRequestId}
+                            autoFocus={terminalId === resolvedActiveTerminalId}
+                            resizeEpoch={resizeEpoch}
+                            drawerHeight={drawerHeight}
+                            keybindings={keybindings}
+                          />
+                        </TerminalErrorBoundary>
                       </div>
                     </div>
                   );
@@ -1355,27 +1400,28 @@ export default function ThreadTerminalDrawer({
               </div>
             ) : (
               <div className="h-full p-1">
-                <TerminalViewport
-                  key={resolvedActiveTerminalId}
-                  threadRef={threadRef}
-                  threadId={threadId}
-                  terminalId={resolvedActiveTerminalId}
-                  terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
-                  cwd={activeTerminalLaunchLocation.cwd}
-                  {...(activeTerminalLaunchLocation.worktreePath !== undefined
-                    ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
-                    : {})}
-                  {...(activeTerminalLaunchLocation.runtimeEnv
-                    ? { runtimeEnv: activeTerminalLaunchLocation.runtimeEnv }
-                    : {})}
-                  onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
-                  onAddTerminalContext={onAddTerminalContext}
-                  focusRequestId={focusRequestId}
-                  autoFocus
-                  resizeEpoch={resizeEpoch}
-                  drawerHeight={drawerHeight}
-                  keybindings={keybindings}
-                />
+                <TerminalErrorBoundary key={resolvedActiveTerminalId}>
+                  <TerminalViewport
+                    threadRef={threadRef}
+                    threadId={threadId}
+                    terminalId={resolvedActiveTerminalId}
+                    terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
+                    cwd={activeTerminalLaunchLocation.cwd}
+                    {...(activeTerminalLaunchLocation.worktreePath !== undefined
+                      ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
+                      : {})}
+                    {...(activeTerminalLaunchLocation.runtimeEnv
+                      ? { runtimeEnv: activeTerminalLaunchLocation.runtimeEnv }
+                      : {})}
+                    onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
+                    onAddTerminalContext={onAddTerminalContext}
+                    focusRequestId={focusRequestId}
+                    autoFocus
+                    resizeEpoch={resizeEpoch}
+                    drawerHeight={drawerHeight}
+                    keybindings={keybindings}
+                  />
+                </TerminalErrorBoundary>
               </div>
             )}
           </div>
