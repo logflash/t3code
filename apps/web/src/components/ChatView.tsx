@@ -133,6 +133,8 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { useQueueRunner } from "./queue/useQueueRunner";
+import { useMessageQueueStore } from "~/messageQueueStore";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -266,6 +268,7 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const QueuePanel = lazy(() => import("./queue/QueuePanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1131,6 +1134,20 @@ function ChatViewContent(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
+  // Whether the composer has no pending content. Used to gate queue auto-send
+  // so a queued message never fires while the user is mid-draft.
+  const composerDraftEmpty = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    if (!draft) return true;
+    return (
+      draft.prompt.trim().length === 0 &&
+      draft.images.length === 0 &&
+      draft.terminalContexts.length === 0 &&
+      draft.elementContexts.length === 0 &&
+      draft.previewAnnotations.length === 0 &&
+      draft.reviewComments.length === 0
+    );
+  });
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
@@ -2888,6 +2905,26 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addQueueSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "queue");
+  }, [activeThreadRef]);
+  // Stash the current composer draft into the queue and clear the composer,
+  // then reveal the Queue surface so the user sees where it landed. Returns
+  // false (and does nothing) when there is no thread or the draft is empty.
+  const queueCurrentDraft = useCallback((): boolean => {
+    if (!activeThreadRef) return false;
+    // Always reveal the queue, even with an empty draft (nothing to add).
+    useRightPanelStore.getState().open(activeThreadRef, "queue");
+    const text = promptRef.current.trim();
+    if (text.length > 0) {
+      useMessageQueueStore.getState().addItem(activeThreadRef, "unstaged", text);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
+    return true;
+  }, [activeThreadRef, clearComposerDraftContent, composerDraftTarget, composerRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -3985,20 +4022,51 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    options?: { overrideText?: string },
+  ) => {
     e?.preventDefault();
-    if (
-      !activeThread ||
-      isSendBusy ||
-      isConnecting ||
-      activeEnvironmentUnavailable ||
-      sendInFlightRef.current
-    )
+    // When `overrideText` is set (queue auto-send), the message text comes from
+    // the queue instead of the live composer, and composer-side side effects
+    // (slash-command handling, plan follow-up routing, failure restore) are
+    // skipped so the user's composer is never touched.
+    const overrideText = options?.overrideText;
+    if (!activeThread || isConnecting || activeEnvironmentUnavailable || sendInFlightRef.current)
       return;
+    // Answering a pending agent question always takes priority over the queue.
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
     }
+    // Keep everything ordered through the queue: when messages are already
+    // staged (a direct send would jump the line) or we're at the in-flight
+    // capacity (a direct send would be dropped), divert a plain-text draft into
+    // the staged queue and reveal the panel instead of dispatching directly.
+    if (!overrideText && activeThreadRef) {
+      const threadQueue =
+        useMessageQueueStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
+      const hasStaged = (threadQueue?.staged.length ?? 0) > 0;
+      if (hasStaged || isSendBusy) {
+        const overflowText = promptRef.current.trim();
+        const ctx = composerRef.current?.getSendContext();
+        const hasAttachments =
+          (ctx?.images.length ?? 0) > 0 ||
+          (ctx?.terminalContexts.length ?? 0) > 0 ||
+          (ctx?.elementContexts.length ?? 0) > 0 ||
+          (ctx?.previewAnnotations.length ?? 0) > 0 ||
+          (ctx?.reviewComments.length ?? 0) > 0;
+        if (overflowText.length > 0 && !hasAttachments) {
+          useMessageQueueStore.getState().addItem(activeThreadRef, "staged", overflowText);
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+          useRightPanelStore.getState().open(activeThreadRef, "queue");
+          return;
+        }
+      }
+    }
+    if (isSendBusy) return;
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx) return;
     const {
@@ -4013,7 +4081,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const promptForSend = promptRef.current;
+    const promptForSend = overrideText ?? promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -4028,7 +4096,7 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
+    if (showPlanFollowUpPrompt && activeProposedPlan && !overrideText) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -4043,6 +4111,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
+      !overrideText &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
@@ -4332,22 +4401,29 @@ function ChatViewContent(props: ChatViewProps) {
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
-        });
+        // A failed queue auto-send leaves the composer untouched; the runner
+        // re-queues the message and pauses instead.
+        if (!overrideText) {
+          promptRef.current = promptForSend;
+          const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+          composerImagesRef.current = retryComposerImages;
+          composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+          composerElementContextsRef.current = composerElementContextsSnapshot;
+          setComposerDraftPrompt(composerDraftTarget, promptForSend);
+          addComposerDraftImages(composerDraftTarget, retryComposerImages);
+          setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+          setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
+          setComposerDraftPreviewAnnotations(
+            composerDraftTarget,
+            composerPreviewAnnotationsSnapshot,
+          );
+          setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+          composerRef.current?.resetCursorState({
+            cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+            prompt: promptForSend,
+            detectTrigger: true,
+          });
+        }
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
@@ -4361,7 +4437,41 @@ function ChatViewContent(props: ChatViewProps) {
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
+    return turnStartSucceeded;
   };
+
+  // Reason the next queued message is held back, or null when it will send as
+  // soon as the thread is idle. Drives both the QueuePanel status and runner.
+  const autoSendBlockedReason = activePendingApproval
+    ? "Waiting for approval"
+    : activePendingProgress
+      ? "Waiting for your input"
+      : phase === "running" || isSendBusy
+        ? "Agent is working"
+        : isConnecting
+          ? "Connecting…"
+          : activeEnvironmentUnavailable
+            ? "Environment offline"
+            : !composerDraftEmpty
+              ? "Finish your draft first"
+              : null;
+  const queueAutoSendReady =
+    activeThreadRef !== null &&
+    phase === "ready" &&
+    !isSendBusy &&
+    !isConnecting &&
+    !activeEnvironmentUnavailable &&
+    activePendingProgress === null &&
+    activePendingApproval === null &&
+    composerDraftEmpty;
+  useQueueRunner({
+    threadRef: activeThreadRef,
+    ready: queueAutoSendReady,
+    sendQueued: async (text) => (await onSend(undefined, { overrideText: text })) === true,
+    onAutoSendError: (message) => {
+      toastManager.add(stackedThreadToast({ type: "warning", title: message }));
+    },
+  });
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -5107,6 +5217,10 @@ function ChatViewContent(props: ChatViewProps) {
         timestampFormat={timestampFormat}
         mode="embedded"
       />
+    ) : activeRightPanelSurface?.kind === "queue" ? (
+      <Suspense fallback={null}>
+        <QueuePanel threadRef={activeThreadRef} blockedReason={autoSendBlockedReason} />
+      </Suspense>
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -5324,6 +5438,7 @@ function ChatViewContent(props: ChatViewProps) {
                       composerTerminalContextsRef={composerTerminalContextsRef}
                       composerElementContextsRef={composerElementContextsRef}
                       onSend={onSend}
+                      {...(activeThreadRef ? { onQueueDraft: queueCurrentDraft } : {})}
                       onInterrupt={onInterrupt}
                       onImplementPlanInNewThread={onImplementPlanInNewThread}
                       onRespondToApproval={onRespondToApproval}
@@ -5459,6 +5574,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddQueue={addQueueSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -5486,6 +5602,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddQueue={addQueueSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
