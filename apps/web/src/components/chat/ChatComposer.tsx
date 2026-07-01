@@ -96,6 +96,7 @@ import {
   BotIcon,
   CircleAlertIcon,
   GitForkIcon,
+  ListPlusIcon,
   ListTodoIcon,
   PencilRulerIcon,
   type LucideIcon,
@@ -572,6 +573,8 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  /** Stash the current draft into the message queue. Returns true when queued. */
+  onQueueDraft?: () => boolean;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -656,6 +659,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onQueueDraft,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -1798,6 +1802,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toggleInteractionMode();
       return true;
     }
+    // Cmd/Ctrl+Shift+Enter stashes the draft into the queue instead of sending.
+    if (key === "Enter" && event.shiftKey && (event.metaKey || event.ctrlKey) && onQueueDraft) {
+      if (onQueueDraft()) return true;
+    }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
     if (menuIsActive) {
@@ -2603,6 +2611,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                {onQueueDraft ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          aria-label="Add to queue"
+                          onClick={() => onQueueDraft()}
+                          className="hidden size-8 shrink-0 items-center justify-center px-0 text-muted-foreground/70 hover:text-foreground/80 sm:inline-flex"
+                        />
+                      }
+                    >
+                      <ListPlusIcon />
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">Add to queue · ⌘⇧⏎</TooltipPopup>
+                  </Tooltip>
+                ) : null}
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}
