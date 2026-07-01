@@ -17,6 +17,12 @@ I've been working on my own fork with many new features. The main additions:
 - **Conversation forking.** Branch any chat into a fresh draft that inherits its
   model, modes, and worktree. Nothing's saved until you send.
 
+- **Message queue.** Line up follow-up prompts in a git-style Queue panel: park
+  ideas as *Unstaged*, stage the ones you want to send, and staged messages fire
+  top-to-bottom as soon as the agent goes idle (with a pause toggle to hold them).
+  Drag to reorder, double-click to edit, and once anything's staged your normal
+  sends fall in line behind it instead of jumping ahead.
+
 - **Sync with remote, with LLM conflict resolution (experimental).** Pull a remote
   branch into your thread's branch from a dialog; conflicts are resolved and
   verified by an LLM, and the whole merge rolls back if anything can't be resolved
